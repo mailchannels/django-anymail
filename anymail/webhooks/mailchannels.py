@@ -79,9 +79,12 @@ class MailChannelsTrackingWebhookView(AnymailBaseWebhookView):
     @staticmethod
     def load_public_key(key):
         if isinstance(key, str):
-            key = key.strip().encode("ascii")
+            key = key.strip().encode("utf-8")
         if key.startswith(b"-----BEGIN"):
-            public_key = serialization.load_pem_public_key(key)
+            try:
+                public_key = serialization.load_pem_public_key(key)
+            except ValueError:
+                public_key = None
             if not isinstance(public_key, Ed25519PublicKey):
                 raise AnymailConfigurationError(
                     "MAILCHANNELS_WEBHOOK_PUBLIC_KEY is not an Ed25519 public key"

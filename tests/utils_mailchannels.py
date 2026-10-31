@@ -39,7 +39,9 @@ def derive_public_pem(private_key):
     )
 
 
-def sign_headers(private_key, body, created=None, label="sig_1738775282"):
+def sign_headers(
+    private_key, body, created=None, label="sig_1738775282", alg="ed25519"
+):
     """Return the headers MailChannels adds to sign a webhook body
 
     (Content-Digest, Signature-Input and Signature, following RFC 9421
@@ -50,8 +52,9 @@ def sign_headers(private_key, body, created=None, label="sig_1738775282"):
     content_digest = "sha-256=:%s:" % b64encode(hashlib.sha256(body).digest()).decode(
         "ascii"
     )
-    signature_params = '("content-digest");created=%d;alg="ed25519";keyid="mckey"' % (
-        created
+    signature_params = '("content-digest");created=%d;alg="%s";keyid="mckey"' % (
+        created,
+        alg,
     )
     signature_base = (
         '"content-digest": %s\n"@signature-params": %s'

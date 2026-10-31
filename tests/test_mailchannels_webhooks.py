@@ -133,9 +133,9 @@ class MailChannelsWebhookSecurityTestCase(WebhookTestCase):
         self.assert_rejected(self.post(headers=headers))
 
     def test_unsupported_algorithm(self):
-        headers = sign_headers(self.private_key, self.body.encode("utf-8"))
-        headers["Signature-Input"] = headers["Signature-Input"].replace(
-            "ed25519", "rsa-pss-sha512"
+        # (Validly signed, but claims an algorithm Anymail doesn't implement)
+        headers = sign_headers(
+            self.private_key, self.body.encode("utf-8"), alg="rsa-pss-sha512"
         )
         self.assert_rejected(self.post(headers=headers))
 
@@ -156,7 +156,13 @@ class MailChannelsWebhookSecurityTestCase(WebhookTestCase):
             with self.subTest(key=key[:20]):
                 view = MailChannelsTrackingWebhookView(webhook_public_key=key)
                 self.assertIsNotNone(view.verification_key)
-        for key in ["", "not base64", "c2hvcnQ="]:
+        for key in [
+            "",
+            "not base64",
+            "c2hvcnQ=",
+            "ключ",
+            "-----BEGIN PUBLIC KEY-----\ngarbage\n-----END PUBLIC KEY-----",
+        ]:
             with self.subTest(key=key):
                 with self.assertRaises(AnymailConfigurationError):
                     MailChannelsTrackingWebhookView(webhook_public_key=key)
