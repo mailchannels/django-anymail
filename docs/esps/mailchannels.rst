@@ -3,9 +3,9 @@
 MailChannels
 ============
 
-Anymail integrates with the `MailChannels Email API`_ for sending mail.
-It uses the `asynchronous send endpoint`_; tracking and inbound webhook
-handlers are not implemented.
+Anymail integrates with the `MailChannels Email API`_ for sending mail
+and for status tracking through signed webhooks.
+It sends with the `asynchronous send endpoint`_.
 
 .. _MailChannels Email API: https://docs.mailchannels.com/email-api/
 .. _asynchronous send endpoint:
@@ -20,6 +20,14 @@ Set your Django email backend and API key in settings.py::
     ANYMAIL = {
         "MAILCHANNELS_API_KEY": "<your API key>",
     }
+
+To verify :ref:`status tracking webhooks <mailchannels-webhooks>`,
+install Anymail with the ``mailchannels`` extra, which adds the ``cryptography``
+package:
+
+.. code-block:: console
+
+    $ python -m pip install 'django-anymail[mailchannels]'
 
 Read the API key from your application's secret store. Sending requires an
 active MailChannels Email API account, an authorized sender domain, and
@@ -44,6 +52,35 @@ the backend constructor instead.
 The base API URL, defaulting to ``"https://api.mailchannels.net/tx/v1/"``.
 Do not include ``send-async``. You can pass ``api_url`` directly to the backend
 constructor. The normal Anymail :setting:`ANYMAIL_REQUESTS_TIMEOUT` applies.
+
+.. setting:: ANYMAIL_MAILCHANNELS_WEBHOOK_PUBLIC_KEY
+
+.. rubric:: MAILCHANNELS_WEBHOOK_PUBLIC_KEY
+
+Required for status tracking webhooks. MailChannels' Ed25519 public key for
+webhook signatures, as the base64 ``key`` value returned by its
+`webhook public-key API`_ (a PEM public key also works)::
+
+    ANYMAIL = {
+        ...
+        "MAILCHANNELS_WEBHOOK_PUBLIC_KEY": "<base64 key>",
+    }
+
+Fetch it once with the ``keyid`` from a webhook's ``Signature-Input`` header
+(currently ``mckey``):
+
+.. code-block:: console
+
+    $ curl -H "X-Api-Key: $MAILCHANNELS_API_KEY" \
+        "https://api.mailchannels.net/tx/v1/webhook/public-key?id=mckey"
+
+The key is public, so it doesn't need to be kept secret. Anymail does not
+fetch it for you, so update the setting if MailChannels rotates its key.
+Anymail also looks for ``MAILCHANNELS_WEBHOOK_PUBLIC_KEY`` at the root of your
+settings.
+
+.. _webhook public-key API:
+    https://docs.mailchannels.com/api-reference/webhooks/retrieve-webhook-signing-key
 
 Sending behavior
 ----------------
@@ -130,14 +167,91 @@ Limitations
 * ``envelope_sender`` maps to ``envelope_from`` (the display name is ignored).
 * ``track_clicks`` and ``track_opens`` map to the corresponding
   ``tracking_settings`` flags. Account eligibility still applies.
-* Anymail ``metadata``, ``merge_metadata``, ``tags``, ``send_at``, AMP content,
+* A single Anymail ``tag`` is sent as MailChannels' ``campaign_id``, which
+  its webhook events report back as the event's
+  :attr:`~anymail.signals.AnymailTrackingEvent.tags`. Multiple tags are
+  unsupported.
+* Anymail ``metadata``, ``merge_metadata``, ``send_at``, AMP content,
   stored templates, and alternative bodies other than text/plain and text/html
   are unsupported. Metadata is not silently sent as visible recipient headers.
 * Inline attachments need a Content-ID; normal attachments with a Content-ID
   remain normal attachments. MailChannels chooses inline disposition from its
   ``content_id`` field.
-* Anymail tracking and inbound webhook handlers are not available.
+* MailChannels doesn't receive inbound mail, so there is no inbound webhook.
 
 Unsupported features raise
 :exc:`~anymail.exceptions.AnymailUnsupportedFeature` unless you explicitly
 configure :ref:`unsupported-features` to ignore them.
+
+
+.. _mailchannels-webhooks:
+
+Status tracking webhooks
+------------------------
+
+If you are using Anymail's normalized :ref:`status tracking <event-tracking>`,
+create a MailChannels webhook (on the `webhooks page`_ of the MailChannels
+Console, or with the `create webhook API`_) with the URL:
+
+   :samp:`https://{yoursite.example.com}/anymail/mailchannels/tracking/`
+
+     * *yoursite.example.com* is your Django site
+
+MailChannels signs every webhook call with an Ed25519
+`HTTP message signature`_ (RFC 9421) over the body's ``Content-Digest``.
+Anymail verifies the digest and the signature with
+:setting:`MAILCHANNELS_WEBHOOK_PUBLIC_KEY <ANYMAIL_MAILCHANNELS_WEBHOOK_PUBLIC_KEY>`,
+and rejects calls whose signature was created more than five minutes ago
+(allowing 30 seconds of clock skew), so your server's clock must be accurate.
+Because the calls are signed, Anymail's shared :setting:`ANYMAIL_WEBHOOK_SECRET`
+basic authentication is optional for this webhook (it's still checked if you
+set it and include the credentials in the webhook URL).
+
+MailChannels' events are reported as these Anymail
+:attr:`~anymail.signals.AnymailTrackingEvent.event_type`\s:
+
+==================  ========================  ==================
+MailChannels        Anymail ``event_type``    ``reject_reason``
+==================  ========================  ==================
+``processed``       queued
+``delivered``       delivered
+``dropped``         rejected                  other
+``hard-bounced``    bounced                   bounced
+``soft-bounced``    deferred
+``open``            opened
+``click``           clicked
+``complained``      complained                spam
+``unsubscribed``    unsubscribed              unsubscribed
+``test``, other     unknown
+==================  ========================  ==================
+
+A MailChannels event can list several ``recipients``; Anymail sends a separate
+tracking signal for each one, with the same
+:attr:`~anymail.signals.AnymailTrackingEvent.esp_event`. Events without
+recipients (such as ``processed``) have a ``None``
+:attr:`~anymail.signals.AnymailTrackingEvent.recipient`.
+
+The event's :attr:`~anymail.signals.AnymailTrackingEvent.message_id` is the
+send API's ``request_id``, matching the message's
+:attr:`~anymail.message.AnymailStatus.message_id` when it was sent. (It is
+``None`` for mail sent through MailChannels SMTP.) MailChannels doesn't provide
+a unique ID for each event, so :attr:`~anymail.signals.AnymailTrackingEvent.event_id`
+is ``None``. :attr:`~anymail.signals.AnymailTrackingEvent.tags` holds the
+message's ``campaign_id``, if any. For bounces and drops,
+:attr:`~anymail.signals.AnymailTrackingEvent.description` is MailChannels'
+``reason`` and :attr:`~anymail.signals.AnymailTrackingEvent.mta_response`
+combines its SMTP ``status`` and ``reason``. Click events include
+:attr:`~anymail.signals.AnymailTrackingEvent.click_url`, and click and open
+events include :attr:`~anymail.signals.AnymailTrackingEvent.user_agent`.
+
+The event's :attr:`~anymail.signals.AnymailTrackingEvent.esp_event` field is
+the `dict` of MailChannels' `webhook event data`_, including fields Anymail
+doesn't normalize, such as ``customer_handle``, ``smtp_id`` and ``ip``.
+If you send for several MailChannels sub-accounts, check ``customer_handle``.
+
+.. _webhooks page: https://dash.mailchannels.com/webhooks
+.. _create webhook API:
+    https://docs.mailchannels.com/api-reference/webhooks/enroll-for-webhook-notifications
+.. _HTTP message signature:
+    https://docs.mailchannels.com/email-api/webhooks#verifying-message-signatures
+.. _webhook event data: https://docs.mailchannels.com/email-api/webhook-event-types

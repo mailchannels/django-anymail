@@ -219,6 +219,14 @@ class MailChannelsPayload(RequestsPayload):
             "enable": track_opens
         }
 
+    def set_tags(self, tags):
+        # MailChannels' campaign_id is reported in its webhook events,
+        # so it can carry a single Anymail tag.
+        if len(tags) > 1:
+            self.unsupported_feature("multiple tags")
+        if tags:
+            self.data["campaign_id"] = tags[0]
+
     def set_merge_data(self, merge_data):
         self.merge_data = merge_data
 

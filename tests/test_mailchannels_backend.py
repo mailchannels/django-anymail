@@ -22,6 +22,7 @@ from .mock_requests_backend import (
 )
 from .utils import (
     get_default_mailer,
+    ignore_connection_warnings,
     ignore_fail_silently_warning,
     override_settings,
     sample_image_content,
@@ -372,7 +373,7 @@ class MailChannelsAnymailTests(MailChannelsBackendMockAPITestCase):
         options = {
             "metadata": {"secret": "value"},
             "merge_metadata": {"to@example.com": {"key": "value"}},
-            "tags": ["tag"],
+            "tags": ["one", "two"],
             "send_at": datetime(2026, 10, 10, tzinfo=timezone.utc),
             "template_id": "stored-template",
         }
@@ -385,6 +386,12 @@ class MailChannelsAnymailTests(MailChannelsBackendMockAPITestCase):
                 with self.assertRaisesMessage(AnymailUnsupportedFeature, name):
                     message.send()
         self.assert_esp_not_called()
+
+    def test_tag(self):
+        # A single tag is sent as campaign_id, which webhook events report
+        self.message.tags = ["receipt"]
+        self.message.send()
+        self.assertEqual(self.get_api_call_json()["campaign_id"], "receipt")
 
     def test_esp_extra_merges_tracking(self):
         self.message.track_clicks = True
@@ -479,12 +486,34 @@ class MailChannelsErrorTests(MailChannelsBackendMockAPITestCase):
         self.assertEqual(self.message.send(fail_silently=True), 0)
         self.assertEqual(self.mock_request.call_count, 1)
 
-    def test_configuration_override(self):
+    @override_settings(
+        MAILERS={
+            "default": {
+                "BACKEND": "anymail.backends.mailchannels.EmailBackend",
+                "OPTIONS": {
+                    "api_key": "other-key",
+                    "api_url": "https://proxy.example/tx/v1",
+                },
+            }
+        },
+    )
+    def test_configuration_options(self):
+        mail.send_mail("Subject", "Message", "from@example.com", ["to@example.com"])
+        self.assert_esp_called("https://proxy.example/tx/v1/send-async")
+        self.assertEqual(self.get_api_call_headers()["X-Api-Key"], "other-key")
+
+    @ignore_connection_warnings()
+    def test_get_connection_override(self):
         connection = mail.get_connection(
             api_key="other-key", api_url="https://proxy.example/tx/v1", timeout=12
         )
-        self.message.connection = connection
-        self.message.send()
+        mail.send_mail(
+            "Subject",
+            "Message",
+            "from@example.com",
+            ["to@example.com"],
+            connection=connection,
+        )
         self.assert_esp_called("https://proxy.example/tx/v1/send-async")
         self.assertEqual(self.get_api_call_headers()["X-Api-Key"], "other-key")
         self.assertEqual(self.get_api_call_arg("timeout"), 12)
@@ -494,10 +523,11 @@ class MailChannelsErrorTests(MailChannelsBackendMockAPITestCase):
         ANYMAIL={},
     )
     def test_missing_api_key(self):
-        with self.assertRaisesMessage(
-            AnymailConfigurationError, "MAILCHANNELS_API_KEY"
+        with self.assertRaisesRegex(
+            AnymailConfigurationError,
+            r"'api_key'|\bMAILCHANNELS_API_KEY.*ANYMAIL_MAILCHANNELS_API_KEY",
         ):
-            mail.get_connection()
+            mail.send_mail("Subject", "Message", "from@example.com", ["to@example.com"])
         self.assert_esp_not_called()
 
 

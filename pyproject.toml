@@ -76,7 +76,7 @@ dependencies = [
 # (Do not use underscores in extra names: they get normalized to hyphens.)
 amazon-ses = ["boto3>=1.43.6", "amazon-s3-encryption-client-python"]
 brevo = []
-mailchannels = []
+mailchannels = ["cryptography"]
 mailersend = []
 mailgun = []
 mailjet = []
