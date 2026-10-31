@@ -30,6 +30,17 @@ vNext
 
 *Unreleased changes*
 
+Features
+~~~~~~~~
+
+* **MailChannels:** Add support for the MailChannels Email API: a sending
+  backend (with inline attachments, envelope sender, a tag as campaign ID,
+  open/click tracking controls, Mustache merge data and batch sending), and
+  a status tracking webhook that verifies MailChannels' Ed25519 webhook
+  signatures. Signature verification requires the ``cryptography`` package
+  (``pip install 'django-anymail[mailchannels]'``). See the
+  `docs <https://anymail.dev/en/stable/esps/mailchannels/>`__.
+
 Fixes
 ~~~~~
 

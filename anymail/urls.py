@@ -5,6 +5,7 @@ from .webhooks.amazon_ses import (
     AmazonSESTrackingWebhookView,
 )
 from .webhooks.brevo import BrevoInboundWebhookView, BrevoTrackingWebhookView
+from .webhooks.mailchannels import MailChannelsTrackingWebhookView
 from .webhooks.mailersend import (
     MailerSendInboundWebhookView,
     MailerSendTrackingWebhookView,
@@ -98,6 +99,11 @@ urlpatterns = [
         "brevo/tracking/",
         BrevoTrackingWebhookView.as_view(),
         name="brevo_tracking_webhook",
+    ),
+    path(
+        "mailchannels/tracking/",
+        MailChannelsTrackingWebhookView.as_view(),
+        name="mailchannels_tracking_webhook",
     ),
     path(
         "mailersend/tracking/",
